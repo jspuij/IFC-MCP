@@ -13,6 +13,7 @@ builder.Logging.AddConsole(options =>
 builder.Services.AddSingleton<ModelSession>();
 builder.Services.AddSingleton<ElementQueryService>();
 builder.Services.AddSingleton<QuantityCalculator>();
+builder.Services.AddSingleton<ExcelExporter>();
 
 builder.Services
     .AddMcpServer(options =>
