@@ -1,3 +1,4 @@
+using IfcMcpServer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,8 @@ builder.Logging.AddConsole(options =>
 {
     options.LogToStandardErrorThreshold = LogLevel.Trace;
 });
+
+builder.Services.AddSingleton<ModelSession>();
 
 builder.Services
     .AddMcpServer(options =>
