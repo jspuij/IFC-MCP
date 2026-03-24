@@ -11,6 +11,7 @@ builder.Logging.AddConsole(options =>
 });
 
 builder.Services.AddSingleton<ModelSession>();
+builder.Services.AddSingleton<ElementQueryService>();
 
 builder.Services
     .AddMcpServer(options =>
