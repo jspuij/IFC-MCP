@@ -43,7 +43,18 @@ Program.cs (Host + DI + MCP setup)
         └── ExportTools           ← export-elements, export-quantities
 ```
 
-Tools are thin wrappers — they parse MCP parameters, call services, and format return values. Business logic lives in the services. `ModelSession` is a DI singleton shared across all tools.
+Tools are thin wrappers — they parse MCP parameters, call services, and format return values. Business logic lives in the services. `ModelSession` is a DI singleton shared across all tools. It implements `IDisposable` to ensure the `IfcStore` is disposed on close/reopen and on server shutdown.
+
+### Cross-Schema Support
+
+The implementation uses XBIM's cross-schema interfaces from `Xbim.Ifc4.Interfaces` (`IIfcProduct`, `IIfcPropertySet`, `IIfcClassificationReference`, etc.) which abstract over both IFC2x3 and IFC4. This means one codebase handles both schemas transparently.
+
+### Error Handling
+
+- All tools except `open-model` return a clear error message if no model is currently loaded.
+- `open-model`: file not found → MCP error; invalid IFC → MCP error with XBIM parse message; opening a new model implicitly closes and disposes the previous one.
+- `close-model` when no model is open → returns a message indicating no model is loaded (not an error).
+- `propertyFilter` with `>/</>=/<=` on non-numeric values → MCP error explaining the operator requires numeric values.
 
 ## MCP Tools
 
@@ -51,9 +62,9 @@ Tools are thin wrappers — they parse MCP parameters, call services, and format
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
-| `open-model` | `filePath` | Model summary: schema version, element counts by type, project name |
+| `open-model` | `filePath` | Brief summary: schema version, project name, total element count |
 | `close-model` | — | Confirmation |
-| `model-info` | — | Current model metadata (schema, file path, site, building, storeys) |
+| `model-info` | — | Full spatial hierarchy: schema, file path, site, building, storeys with element counts |
 
 ### Query Tools
 
@@ -62,14 +73,14 @@ Tools are thin wrappers — they parse MCP parameters, call services, and format
 | `list-elements` | `ifcType?`, `classification?`, `propertyFilter?`, `maxResults?` (default 50) | Table: GlobalId, Name, Type, Classification |
 | `get-element` | `globalId` | Full detail: all property sets, quantity sets, classification refs, type info |
 | `list-classifications` | — | All classification systems and references in the model |
-| `list-property-sets` | `ifcType?` | Property set names and their properties for elements of that type |
+| `list-property-sets` | `ifcType?` | Distinct property set names and their property definitions across elements of that type (or all elements) |
 | `list-storeys` | — | Building storeys with contained element counts |
 
 ### Quantity Calculation
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
-| `calculate-quantities` | `ifcType?`, `classification?`, `propertyFilter?`, `groupBy`, `quantityNames?` | Grouped table with summed quantities and element count |
+| `calculate-quantities` | `ifcType?`, `classification?`, `propertyFilter?`, `groupBy` (required), `quantityNames?` | Grouped table with summed quantities and element count |
 
 ### Export
 
@@ -83,8 +94,8 @@ Tools are thin wrappers — they parse MCP parameters, call services, and format
 All filters are optional and AND-ed together when combined:
 
 - **`ifcType`** — IFC entity name (e.g. `"IfcWall"`, `"IfcSlab"`). Matches subtypes (e.g. `"IfcWall"` includes `IfcWallStandardCase`).
-- **`classification`** — matches classification reference codes or names. Supports wildcard: `"Ss_20*"`.
-- **`propertyFilter`** — format: `"PsetName.PropertyName=Value"`. Operators: `=`, `!=`, `>`, `<`, `>=`, `<=`. Multiple filters comma-separated: `"Pset_WallCommon.IsExternal=True,Pset_WallCommon.FireRating=REI60"`.
+- **`classification`** — matches against both `Identification` and `Name` fields on `IfcClassificationReference`. Supports glob-style `*` wildcard (e.g. `"Ss_20*"`). Case-insensitive. Classification references inherited from the type object are included.
+- **`propertyFilter`** — an array of filter strings, each in the format `"PsetName.PropertyName=Value"`. Operators: `=`, `!=` (all types), `>`, `<`, `>=`, `<=` (numeric values only; returns error on non-numeric). Boolean matching is case-insensitive (`"True"`, `"true"`, `"TRUE"` all match). Example: `["Pset_WallCommon.IsExternal=True", "Pset_WallCommon.FireRating=REI60"]`.
 
 ## Quantity Resolution
 
@@ -104,6 +115,8 @@ The `groupBy` parameter in `calculate-quantities`:
 - `"property:PsetName.PropertyName"` — group by a property value
 
 Each group row includes summed numeric quantities and element count.
+
+When `quantityNames` is omitted, all `IfcQuantityArea`, `IfcQuantityLength`, `IfcQuantityVolume`, `IfcQuantityWeight`, and `IfcQuantityCount` values found on the matched elements are included as columns.
 
 ## Excel Export Format
 
