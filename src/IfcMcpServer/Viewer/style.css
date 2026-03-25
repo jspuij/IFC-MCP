@@ -1,0 +1,27 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1a2e;
+}
+
+#container {
+  width: 100%;
+  height: 100%;
+}
+
+#status {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  color: #94a3b8;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 6px 12px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+}

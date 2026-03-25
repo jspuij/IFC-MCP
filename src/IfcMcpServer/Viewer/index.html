@@ -2,9 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IFC Viewer</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <p>Viewer placeholder</p>
+  <div id="container"></div>
+  <div id="status">Loading model...</div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.173.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.173.0/examples/jsm/",
+      "web-ifc": "https://unpkg.com/web-ifc@0.0.75/web-ifc-api.js",
+      "@thatopen/components": "https://unpkg.com/@thatopen/components/dist/index.min.js",
+      "@thatopen/fragments": "https://unpkg.com/@thatopen/fragments/dist/index.min.js"
+    }
+  }
+  </script>
+  <script type="module" src="viewer.js"></script>
 </body>
 </html>
