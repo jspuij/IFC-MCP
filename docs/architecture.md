@@ -2,29 +2,41 @@
 
 ## Overview
 
-The IFC MCP Server is a stateful .NET console application that communicates over stdio using the Model Context Protocol. It enables AI assistants to interactively query IFC building models through a conversational workflow: open a model, explore and filter elements, calculate quantities, and export results.
+The IFC MCP Server is a stateful .NET console application that communicates over stdio using the Model Context Protocol. It enables AI assistants to interactively query IFC building models through a conversational workflow: open a model, explore and filter elements, calculate quantities, export results, and visualize the model in a browser-based 3D viewer.
 
 ## System Diagram
 
 ```
-┌─────────────────┐     stdio (JSON-RPC)     ┌──────────────────────┐
-│  Claude Code /   │◄──────────────────────►│   IFC MCP Server     │
-│  Claude Desktop  │                          │                      │
-└─────────────────┘                          │  ┌────────────────┐  │
-                                              │  │  MCP Tools     │  │
-                                              │  │  (thin layer)  │  │
-                                              │  └───────┬────────┘  │
-                                              │          │ DI        │
-                                              │  ┌───────▼────────┐  │
-                                              │  │  Services      │  │
-                                              │  │  (logic)       │  │
-                                              │  └───────┬────────┘  │
-                                              │          │           │
-                                              │  ┌───────▼────────┐  │
-                                              │  │  ModelSession   │  │
-                                              │  │  (IfcStore)     │  │
-                                              │  └────────────────┘  │
-                                              └──────────────────────┘
+                                                              ┌──────────────────┐
+                                                              │     Browser      │
+                                                              │  ┌────────────┐  │
+                                                              │  │ Three.js   │  │
+                                                              │  │ web-ifc    │  │
+                                                              │  │ @thatopen  │  │
+                                                              │  └────────────┘  │
+                                                              └────────┬─────────┘
+                                                                       │
+                                                               HTTP + WebSocket
+                                                              (localhost:{port})
+                                                                       │
+┌─────────────────┐     stdio (JSON-RPC)     ┌─────────────────────────▼──────┐
+│  Claude Code /   │◄──────────────────────►│         IFC MCP Server         │
+│  Claude Desktop  │                          │                                │
+└─────────────────┘                          │  ┌────────────┐ ┌───────────┐  │
+                                              │  │ MCP Tools  │ │  Viewer   │  │
+                                              │  │(thin layer)│ │  Service  │  │
+                                              │  └─────┬──────┘ │ (Kestrel) │  │
+                                              │        │ DI     └───────────┘  │
+                                              │  ┌─────▼──────┐                │
+                                              │  │  Services   │                │
+                                              │  │  (logic)    │                │
+                                              │  └─────┬──────┘                │
+                                              │        │                       │
+                                              │  ┌─────▼──────┐                │
+                                              │  │ModelSession │                │
+                                              │  │ (IfcStore)  │                │
+                                              │  └────────────┘                │
+                                              └────────────────────────────────┘
                                                          │
                                                          ▼
                                                    ┌──────────┐
@@ -47,10 +59,11 @@ Tools are discovered automatically by `WithToolsFromAssembly()` at startup.
 
 | File | Tools | Responsibility |
 |------|-------|----------------|
-| `ModelTools.cs` | open-model, close-model, model-info | Model lifecycle |
+| `ModelTools.cs` | open-model, close-model, model-info | Model lifecycle (also triggers viewer reload/stop) |
 | `QueryTools.cs` | list-elements, get-element, list-classifications, list-property-sets, list-storeys | Element querying |
 | `QuantityTools.cs` | calculate-quantities | Quantity aggregation |
 | `ExportTools.cs` | export-elements, export-quantities | Excel export |
+| `ViewerTools.cs` | viewer-open, viewer-close, viewer-highlight, viewer-isolate, viewer-reset, viewer-camera | 3D viewer control |
 
 ### Services Layer
 
@@ -62,6 +75,24 @@ Singleton services registered in `Program.cs` that contain all business logic.
 | `ElementQueryService` | Filters elements by type, classification, and properties. Queries classifications, property sets, and storeys. |
 | `QuantityCalculator` | Resolves quantities from elements (instance then type level), groups elements, and aggregates numeric values. |
 | `ExcelExporter` | Generates `.xlsx` files from element lists or quantity results using ClosedXML. |
+| `ViewerService` | Manages an embedded Kestrel web server for the 3D viewer. Serves static files, the IFC model, and WebSocket commands. |
+
+### ViewerService (3D Web Viewer)
+
+ViewerService runs a separate Kestrel HTTP + WebSocket server on a random port, independent from the MCP stdio transport. It:
+
+- Serves the browser viewer (HTML/JS/CSS) from embedded resources at the root URL
+- Serves the raw `.ifc` file at `/model.ifc` for the browser to parse with web-ifc
+- Accepts WebSocket connections at `/ws` and broadcasts JSON commands to all connected browsers
+- Suppresses all Kestrel logging to prevent corrupting the MCP stdio channel
+
+The browser-side viewer uses [That Open Engine](https://github.com/ThatOpen/engine_components) (@thatopen/components + @thatopen/fragments) loaded via CDN import maps. It parses IFC with web-ifc (WebAssembly) and renders with Three.js.
+
+**WebSocket commands:** `highlight`, `isolate`, `reset`, `camera-fit`, `reload`
+
+**Integration with model lifecycle:**
+- `open-model` sends a `reload` command if the viewer is running
+- `close-model` stops the viewer if it's running
 
 ### ModelSession (Stateful Core)
 
@@ -134,20 +165,56 @@ Tool call (export-elements, filePath="output.xlsx")
   → Return "Exported N element(s) to output.xlsx"
 ```
 
+### Viewer Flow
+
+```
+Tool call (viewer-open)
+  → ViewerService.StartAsync()
+    → Find available port
+    → Start Kestrel (HTTP + WebSocket)
+    → Serve embedded viewer files + /model.ifc
+  → Return URL string
+
+Tool call (viewer-highlight, globalIds=["abc", "def"])
+  → ViewerService.SendHighlightAsync(globalIds)
+    → Serialize { action: "highlight", globalIds: [...] }
+    → Broadcast to all connected WebSocket clients
+  → Return confirmation string
+
+Browser receives WebSocket message:
+  → Parse JSON command
+  → model.getLocalIdsByGuids(globalIds) — map GlobalIds to local IDs
+  → model.setColor(undefined, dimColor) — dim everything
+  → model.resetColor(selectedLocalIds) — restore selected elements
+```
+
 ## Error Handling
 
 - **No model loaded:** All tools (except `open-model`) return `"Error: No model is currently loaded. Use open-model first."`
 - **File not found:** `open-model` catches `FileNotFoundException` and returns an error string
 - **Invalid filter:** Property filter parsing errors are returned as descriptive error strings
 - **Element not found:** `get-element` returns `"Error: Element with GlobalId '...' not found."`
+- **Viewer not running:** Viewer command tools return `"Error: Viewer is not running. Use viewer-open first."`
+- **WebSocket disconnect:** Commands are silently dropped if no browser is connected
 
 All errors are returned as plain strings — no exceptions propagate to the MCP transport layer.
 
 ## Dependencies
 
+### .NET (server)
 ```
-Microsoft.Extensions.Hosting    → DI container, app lifetime
-ModelContextProtocol             → MCP server SDK, stdio transport
-Xbim.Essentials                  → IFC model parsing (IFC2x3 + IFC4)
-ClosedXML                        → Excel .xlsx generation
+Microsoft.NET.Sdk.Web                        → ASP.NET Core (Kestrel, WebSocket middleware)
+Microsoft.Extensions.FileProviders.Embedded  → Serve embedded viewer files
+ModelContextProtocol                         → MCP server SDK, stdio transport
+Xbim.Essentials                              → IFC model parsing (IFC2x3 + IFC4)
+ClosedXML                                    → Excel .xlsx generation
+```
+
+### JavaScript (browser, via CDN)
+```
+three                     → 3D rendering (WebGL)
+web-ifc                   → IFC parser (WebAssembly)
+camera-controls           → Orbit/pan/zoom camera
+@thatopen/components      → BIM viewer components
+@thatopen/fragments       → Fragment-based IFC model management
 ```

@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete reference for all 11 MCP tools provided by the IFC MCP Server.
+Complete reference for all 17 MCP tools provided by the IFC MCP Server.
 
 ## Model Management
 
@@ -273,3 +273,102 @@ Quantities are resolved with the following priority:
 3. **Not found** — blank cell / zero in aggregation
 
 When quantities are aggregated across a group, values are summed.
+
+---
+
+## 3D Viewer
+
+The viewer tools control a browser-based 3D visualization of the loaded IFC model. The viewer runs on an embedded web server (separate from the MCP transport) and communicates via WebSocket.
+
+### viewer-open
+
+Start the 3D web viewer and return the URL. Requires a model to be loaded first.
+
+**Parameters:** None
+
+**Returns:** The viewer URL (e.g., `http://localhost:52341`).
+
+**Notes:**
+- The viewer starts on a random available port
+- Open the returned URL in a browser to see the 3D model
+- The browser parses the IFC file client-side using web-ifc (WebAssembly)
+- Idempotent — calling again when already running returns the same URL
+
+---
+
+### viewer-close
+
+Stop the 3D web viewer.
+
+**Parameters:** None
+
+**Returns:** Confirmation message.
+
+---
+
+### viewer-highlight
+
+Highlight specific elements in the viewer by their GlobalId. Non-highlighted elements are dimmed to gray.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `globalIds` | string[] | Yes | Array of IFC GlobalIds to highlight |
+
+**Returns:** Confirmation with element count.
+
+**Behavior:** All elements are dimmed to gray, then the specified elements are restored to their original color. Use `viewer-reset` to restore the view.
+
+---
+
+### viewer-isolate
+
+Show only the specified elements — everything else is hidden.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `globalIds` | string[] | Yes | Array of IFC GlobalIds to isolate |
+
+**Returns:** Confirmation with element count.
+
+**Behavior:** All elements are hidden, then only the specified elements are made visible. Use `viewer-reset` to restore the view.
+
+---
+
+### viewer-reset
+
+Reset the viewer to show all elements with default visibility and colors.
+
+**Parameters:** None
+
+**Returns:** Confirmation message.
+
+**Behavior:** Restores all element visibility (undoes isolate) and resets all colors (undoes highlight).
+
+---
+
+### viewer-camera
+
+Fly the camera to fit specific elements in the view.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `globalIds` | string[] | Yes | Array of IFC GlobalIds to fit in the camera view |
+
+**Returns:** Confirmation with element count.
+
+**Behavior:** Computes the bounding box of the specified elements and animates the camera to fit them in view. Can be combined with highlight or isolate.
+
+---
+
+### Typical Viewer Workflow
+
+```
+1. open-model    → Load an IFC file
+2. viewer-open   → Start the viewer, open URL in browser
+3. list-elements → Query elements, get GlobalIds
+4. viewer-highlight globalIds → Highlight found elements (rest dimmed)
+5. viewer-camera globalIds   → Zoom to highlighted elements
+6. viewer-reset              → Restore full view
+7. viewer-isolate globalIds  → Show only specific elements
+8. viewer-reset              → Restore again
+```
