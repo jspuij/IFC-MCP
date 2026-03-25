@@ -14,6 +14,7 @@ builder.Services.AddSingleton<ModelSession>();
 builder.Services.AddSingleton<ElementQueryService>();
 builder.Services.AddSingleton<QuantityCalculator>();
 builder.Services.AddSingleton<ExcelExporter>();
+builder.Services.AddSingleton<ViewerService>();
 
 builder.Services
     .AddMcpServer(options =>
