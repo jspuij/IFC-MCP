@@ -1,4 +1,7 @@
+using System.Net.WebSockets;
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -11,6 +14,8 @@ public class ViewerService : IDisposable
     private readonly ModelSession _session;
     private WebApplication? _app;
     private int _port;
+    private readonly List<WebSocket> _clients = [];
+    private readonly Lock _clientsLock = new();
 
     public bool IsRunning => _app != null;
     public string? Url => IsRunning ? $"http://localhost:{_port}" : null;
@@ -62,6 +67,32 @@ public class ViewerService : IDisposable
             await context.Response.SendFileAsync(filePath);
         });
 
+        _app.UseWebSockets();
+        _app.Map("/ws", async context =>
+        {
+            if (!context.WebSockets.IsWebSocketRequest)
+            {
+                context.Response.StatusCode = 400;
+                return;
+            }
+            var ws = await context.WebSockets.AcceptWebSocketAsync();
+            lock (_clientsLock) { _clients.Add(ws); }
+            try
+            {
+                var buf = new byte[256];
+                while (ws.State == WebSocketState.Open)
+                {
+                    var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        break;
+                }
+            }
+            finally
+            {
+                lock (_clientsLock) { _clients.Remove(ws); }
+            }
+        });
+
         await _app.StartAsync();
     }
 
@@ -71,6 +102,41 @@ public class ViewerService : IDisposable
         await _app.StopAsync();
         await _app.DisposeAsync();
         _app = null;
+    }
+
+    public Task SendHighlightAsync(IReadOnlyList<string> globalIds) =>
+        BroadcastAsync(new { action = "highlight", globalIds });
+
+    public Task SendIsolateAsync(IReadOnlyList<string> globalIds) =>
+        BroadcastAsync(new { action = "isolate", globalIds });
+
+    public Task SendResetAsync() =>
+        BroadcastAsync(new { action = "reset" });
+
+    public Task SendCameraFitAsync(IReadOnlyList<string> globalIds) =>
+        BroadcastAsync(new { action = "camera-fit", globalIds });
+
+    public Task SendReloadAsync() =>
+        BroadcastAsync(new { action = "reload" });
+
+    private async Task BroadcastAsync(object message)
+    {
+        var json = JsonSerializer.Serialize(message, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+        var bytes = Encoding.UTF8.GetBytes(json);
+
+        WebSocket[] snapshot;
+        lock (_clientsLock) { snapshot = [.. _clients]; }
+
+        foreach (var ws in snapshot)
+        {
+            if (ws.State == WebSocketState.Open)
+            {
+                await ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
     }
 
     private static int GetAvailablePort()
