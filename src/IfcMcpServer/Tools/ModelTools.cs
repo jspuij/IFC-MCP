@@ -10,8 +10,9 @@ namespace IfcMcpServer.Tools;
 public static class ModelTools
 {
     [McpServerTool(Name = "open-model", ReadOnly = false), Description("Open an IFC file for querying. Closes any previously opened model.")]
-    public static string OpenModel(
+    public static async Task<string> OpenModel(
         ModelSession session,
+        ViewerService viewer,
         [Description("Absolute or relative path to the IFC file")] string filePath)
     {
         session.OpenModel(filePath);
@@ -22,14 +23,22 @@ public static class ModelTools
         var projectName = project?.Name?.ToString() ?? "(unnamed)";
         var totalElements = model.Instances.OfType<IIfcProduct>().Count();
 
+        if (viewer.IsRunning)
+            await viewer.SendReloadAsync();
+
         return $"Model opened: {filePath}\nSchema: {schemaVersion}\nProject: {projectName}\nTotal elements: {totalElements}";
     }
 
     [McpServerTool(Name = "close-model", ReadOnly = false), Description("Close the currently loaded IFC model and free memory.")]
-    public static string CloseModel(ModelSession session)
+    public static async Task<string> CloseModel(
+        ModelSession session,
+        ViewerService viewer)
     {
         if (!session.IsModelLoaded)
             return "No model is currently loaded.";
+
+        if (viewer.IsRunning)
+            await viewer.StopAsync();
 
         session.CloseModel();
         return "Model closed.";
