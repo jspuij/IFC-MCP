@@ -3,3 +3,5 @@ obj/
 TestResults/
 *.user
 .vs/
+.worktrees/
+.superpowers/
