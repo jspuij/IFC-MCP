@@ -119,71 +119,73 @@ function handleCommand(msg) {
   }
 }
 
-function findFragmentIdsByGlobalIds(globalIds) {
-  const idSet = new Set(globalIds);
-  const selectionMap = new Map();
-
-  for (const [, model] of fragments.list) {
-    if (!model.object) continue;
-    model.object.traverse((child) => {
-      if (!child.isMesh) return;
-      const frag = child;
-      if (!frag.fragment) return;
-      for (const [itemId, expressIds] of frag.fragment.ids) {
-        if (idSet.has(itemId)) {
-          if (!selectionMap.has(frag.fragment.id)) {
-            selectionMap.set(frag.fragment.id, new Set());
-          }
-          for (const eid of expressIds) {
-            selectionMap.get(frag.fragment.id).add(eid);
-          }
-        }
-      }
-    });
+// Build a modelIdMap { modelId: localIds } from GlobalIds
+// This is the format hider.set() and hider.isolate() expect.
+async function buildModelIdMap(globalIds) {
+  const modelIdMap = {};
+  for (const [modelId, model] of fragments.list) {
+    const localIds = await model.getLocalIdsByGuids(globalIds);
+    if (localIds && (localIds.size > 0 || localIds.length > 0)) {
+      modelIdMap[modelId] = localIds;
+    }
   }
-  return selectionMap;
+  return modelIdMap;
 }
 
-function highlightElements(globalIds) {
-  // Reset first, then dim everything except the highlighted elements.
-  // This uses the same isolate mechanism as a fallback — a proper color
-  // overlay (e.g., tinted material) can replace this once the fragment
-  // color API is confirmed at runtime.
-  resetView();
+async function highlightElements(globalIds) {
+  await resetView();
   if (!globalIds || globalIds.length === 0) return;
 
-  const selectionMap = findFragmentIdsByGlobalIds(globalIds);
-  if (selectionMap.size > 0) {
-    hider.set(false);
-    hider.set(true, selectionMap);
+  const selectedMap = await buildModelIdMap(globalIds);
+  if (Object.keys(selectedMap).length === 0) return;
+
+  // setColor(localIds: number[] | undefined, color: Color)
+  // resetColor(localIds: number[] | undefined)
+  const dimColor = new THREE.Color(0.5, 0.5, 0.5);
+  for (const [modelId, model] of fragments.list) {
+    // Dim all elements
+    await model.setColor(undefined, dimColor);
+    // Reset color on selected elements so they stand out
+    if (selectedMap[modelId]) {
+      const localIds = selectedMap[modelId];
+      const idsArray = Array.isArray(localIds) ? localIds : [...localIds];
+      await model.resetColor(idsArray);
+    }
   }
   status.textContent = `Highlighted ${globalIds.length} element(s)`;
 }
 
-function isolateElements(globalIds) {
+async function isolateElements(globalIds) {
   if (!globalIds || globalIds.length === 0) return;
-  hider.set(false);
-  const selectionMap = findFragmentIdsByGlobalIds(globalIds);
-  hider.set(true, selectionMap);
+
+  const modelIdMap = await buildModelIdMap(globalIds);
+  if (Object.keys(modelIdMap).length > 0) {
+    await hider.isolate(modelIdMap);
+  }
   status.textContent = `Isolated ${globalIds.length} element(s)`;
 }
 
-function resetView() {
-  hider.set(true);
+async function resetView() {
+  await hider.set(true);
+  for (const [, model] of fragments.list) {
+    // resetColor(undefined) resets all items
+    await model.resetColor(undefined);
+  }
   status.textContent = "View reset.";
 }
 
 async function fitCamera(globalIds) {
   if (!globalIds || globalIds.length === 0) return;
-  const selectionMap = findFragmentIdsByGlobalIds(globalIds);
+
+  const modelIdMap = await buildModelIdMap(globalIds);
+  // Compute bounding box from all visible meshes of the target elements
   const box = new THREE.Box3();
-  for (const [fragId, expressIds] of selectionMap) {
-    world.scene.three.traverse((child) => {
-      if (!child.isMesh || !child.fragment) return;
-      if (child.fragment.id === fragId) {
-        const meshBox = new THREE.Box3().setFromObject(child);
-        box.union(meshBox);
-      }
+  for (const [modelId, model] of fragments.list) {
+    if (!modelIdMap[modelId] || !model.object) continue;
+    model.object.traverse((child) => {
+      if (!child.isMesh || !child.visible) return;
+      const meshBox = new THREE.Box3().setFromObject(child);
+      box.union(meshBox);
     });
   }
   if (!box.isEmpty()) {
